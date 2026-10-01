@@ -134,10 +134,12 @@ header .spacer{flex:1;}
 .tool-list{display:none; grid-template-columns:repeat(auto-fill,minmax(112px,1fr)); gap:4px; padding:0 7px 8px 20px;}
 .tool-cat.open .tool-list{display:grid;}
 .tool-list .titem{font-size:11.5px; padding:4px 6px; background:var(--panel2); border-radius:6px; border:1px solid var(--border); cursor:grab; color:var(--muted); display:flex; align-items:center; gap:6px; min-width:0;}
-.tool-list .titem span:not(.item-del){overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.tool-list .titem span:not(.item-del):not(.item-edit){overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .tool-list .titem:hover{color:var(--text); border-color:var(--purple);}
-.tool-list .titem .item-del{margin-left:auto; color:var(--muted); font-size:11px; flex-shrink:0;}
+.tool-list .titem .item-del,.tool-list .titem .item-edit{color:var(--muted); font-size:11px; flex-shrink:0;}
+.tool-list .titem .item-edit{margin-left:auto;}
 .tool-list .titem .item-del:hover{color:var(--red);}
+.tool-list .titem .item-edit:hover{color:var(--purple2);}
 .ic-preview{display:inline-block; width:16px; height:16px; border-radius:4px; background-size:cover; background-position:center; flex-shrink:0;}
 
 .resizer-h{cursor:row-resize; background:transparent; position:relative; z-index:6;}
@@ -472,8 +474,12 @@ function paintIcons(root=document){root.querySelectorAll('[data-icon]').forEach(
 function escapeHtml(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 function clamp(v,min,max){ return Math.max(min,Math.min(max,v)); }
 
-/* Avatar padrão (silhueta), usado em vez de qualquer "bolinha" colorida — todo token é sempre uma imagem. */
+/* Avatar padrão (silhueta), usado em vez de qualquer "bolinha" — todo token é sempre uma imagem, nunca um círculo/badge provisório. */
 const DEFAULT_AVATAR='data:image/svg+xml;utf8,'+encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect width="100" height="100" fill="#1a1a22"/><circle cx="50" cy="36" r="18" fill="#34343f"/><path d="M18 92c0-22 14-34 32-34s32 12 32 34" fill="#34343f"/></svg>');
+/* Versão colorida (sem círculo, sem borda) usada nos tokens do mapa que ainda não têm imagem própria. */
+function defaultAvatarSvg(color){
+  return 'data:image/svg+xml;utf8,'+encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect width="100" height="100" fill="${color}"/><circle cx="50" cy="36" r="18" fill="#00000035"/><path d="M18 92c0-22 14-34 32-34s32 12 32 34" fill="#00000035"/></svg>`);
+}
 
 /* ================= DADOS DOS PERSONAGENS ================= */
 const pericias=["Acrobacia","Adestramento","Atletismo","Ciências","Crime","Diplomacia","Enganação","Furtividade","Iniciativa","Intimidação","Investigação","Medicina","Ocultismo","Percepção","Pilotagem","Profissão","Pontaria","Reflexos","Tecnologia","Vontade"];
@@ -602,6 +608,11 @@ function addIconBar(el,obj,opts){
     renBtn.onclick=e=>{ e.stopPropagation(); opts.onRename(); };
     bar.appendChild(renBtn);
   }
+  if(opts.onEditImg){
+    const imgBtn=document.createElement('button'); imgBtn.textContent='🖌️'; imgBtn.title='Editar imagem';
+    imgBtn.onclick=e=>{ e.stopPropagation(); opts.onEditImg(); };
+    bar.appendChild(imgBtn);
+  }
   if(opts.onRounded){
     const rBtn=document.createElement('button'); rBtn.textContent=obj.rounded?'◯':'◻'; rBtn.title='Arredondar bordas';
     rBtn.onclick=e=>{ e.stopPropagation(); opts.onRounded(); };
@@ -655,7 +666,7 @@ function renderTokens(){
         });
         obj.appendChild(rot);
       }
-      addIconBar(obj,t,{rerender:renderTokens,onDelete:()=>{maps[curMap].tokens=maps[curMap].tokens.filter(x=>x!==t);selectedToken=null;renderTokens();}});
+      addIconBar(obj,t,{rerender:renderTokens,onDelete:()=>{pushUndo();maps[curMap].tokens=maps[curMap].tokens.filter(x=>x!==t);selectedToken=null;renderTokens();},onEditImg:()=>openEditForToken(t,null)});
       mapWrapEl.appendChild(obj);
       return;
     }
@@ -671,9 +682,9 @@ function renderTokens(){
     const circle=document.createElement('div'); circle.className='token'+(master&&selected.id===master.id?' sel':'');
     circle.style.width=size+'px'; circle.style.height=size+'px'; circle.style.position='relative';
     circle.style.transform=t.rot?`rotate(${t.rot}deg)`:'none';
-    if(img){ circle.style.background=`center/contain no-repeat url(${img})`; circle.style.border='none'; }
-    else if(icon){ circle.style.fontSize=(size*0.75)+'px'; circle.textContent=icon; circle.style.border='none'; }
-    else { circle.style.background=`center/contain no-repeat url(${DEFAULT_AVATAR})`; circle.style.borderRadius='50%'; circle.style.border='2px solid '+color; }
+    if(img){ circle.style.background=`center/contain no-repeat url(${img})`; circle.style.border='none'; circle.style.borderRadius='0'; }
+    else if(icon){ circle.style.fontSize=(size*0.75)+'px'; circle.textContent=icon; circle.style.border='none'; circle.style.borderRadius='0'; }
+    else { circle.style.background=`center/contain no-repeat url(${defaultAvatarSvg(color)})`; circle.style.borderRadius='0'; circle.style.border='none'; }
     const label=document.createElement('div'); label.className='token-label'; label.textContent=name||'';
     if(!name) label.style.display='none';
     if(t===selectedToken&&!t.locked){
@@ -697,9 +708,10 @@ function renderTokens(){
         label.style.display=''; label.contentEditable='true'; label.focus(); const rg=document.createRange();rg.selectNodeContents(label);const sel2=window.getSelection();sel2.removeAllRanges();sel2.addRange(rg);
         label.addEventListener('blur',function h(){const v=label.textContent.trim();label.contentEditable='false';label.removeEventListener('blur',h);if(v){if(master)master.name=v;else t.name=v;}renderTokens();renderPlayers();if(master)renderSheet();},{once:true});
       },
+      onEditImg:()=>openEditForToken(t,master),
       color: usingDefaultAvatar ? {
         value:color,
-        live:c=>{circle.style.borderColor=c;},
+        live:c=>{circle.style.background=`center/contain no-repeat url(${defaultAvatarSvg(c)})`;},
         commit:c=>{ if(master)master.color=c; else t.color=c; renderTokens(); renderPlayers(); }
       } : null
     });
@@ -836,7 +848,6 @@ function editTextShape(el,s){
     s.text=v;
     if(!s.text){ maps[curMap].shapes=maps[curMap].shapes.filter(x=>x!==s); if(selectedShape===s) selectedShape=null; }
     renderShapeLayer();
-    if(activeTool==='text') setActiveTool('select',document.querySelector('#toolbar button[data-t="select"]'));
   };
   editor._finish=finish;
   editor.addEventListener('keydown',e=>{
@@ -933,10 +944,6 @@ function setActiveTool(tool,btn){
   activeTool=tool;
   cv.style.pointerEvents=(tool==='select')?'none':'auto';
 }
-function finishOneShotTool(){
-  if(activeTool==='erase' || activeTool==='select' || activeTool==='text') return;
-  setActiveTool('select',document.querySelector('#toolbar button[data-t="select"]'));
-}
 document.getElementById('toolbar').addEventListener('click',e=>{
   const b=e.target.closest('button'); if(!b || !b.dataset.t) return;
   closeTextEditor();
@@ -1022,7 +1029,6 @@ window.addEventListener('mouseup',()=>{
     }
     previewEl.remove(); previewEl=null; drawingPreview=false; renderShapeLayer();
   }
-  finishOneShotTool();
 });
 
 /* ================= PAINEL DE FERRAMENTAS — dividido em TOKENS e FERRAMENTAS, grade em colunas ================= */
@@ -1033,7 +1039,7 @@ function buildCatDiv(c,q){
   if(q && !catMatch && !matchingItems.length) return null;
 
   const div=document.createElement('div'); div.className='tool-cat';
-  const itemsHtml=matchingItems.map(it=>`<div class="titem" draggable="true" title="${escapeHtml(it.desc||'')}">${it.img?`<span class="ic-preview" style="background-image:url(${it.img})"></span>`:`<span class="item-icon">${iconSvg(it.iconName||'package',14)}</span>`}<span>${escapeHtml(it.n)}</span>${it.custom?'<span class="item-del">×</span>':''}</div>`).join('');
+  const itemsHtml=matchingItems.map(it=>`<div class="titem" draggable="true" title="${escapeHtml(it.desc||'')}">${it.img?`<span class="ic-preview" style="background-image:url(${it.img})"></span>`:`<span class="item-icon">${iconSvg(it.iconName||'package',14)}</span>`}<span>${escapeHtml(it.n)}</span>${it.custom?'<span class="item-edit">🖌️</span><span class="item-del">×</span>':''}</div>`).join('');
   div.innerHTML=`<button><span class="cat-icon">${iconSvg(c.iconName||'package',15)}</span><span style="flex:1">${escapeHtml(c.name)}</span><small>${c.items.length?c.items.length+' itens':(c.action?'Controle de turnos':'Vazio')}</small>${c.custom?'<span class="cat-del">×</span>':''}<span class="arrow">›</span></button>
     <div class="tool-list">${itemsHtml}</div>`;
 
@@ -1518,20 +1524,45 @@ function renderEditorStage(){
   updateCropBoxUI();
   updateEditorPreview();
 }
+function startEditorWithImage(img, defaultName, defaultDesc, onConfirm){
+  edit={img, rot:0, flipH:false, flipV:false, crop:{x:0,y:0,w:100,h:100}, onConfirm};
+  document.getElementById('editorName').value=defaultName||'';
+  document.getElementById('editorDesc').value=defaultDesc||'';
+  renderEditorStage();
+  imgEditModal.classList.add('show');
+}
+/* Abre o editor a partir de um arquivo recém-escolhido (upload novo). */
 function openImageEditor(file, defaultName, onConfirm){
   const reader=new FileReader();
   reader.onload=ev=>{
     const img=new Image();
-    img.onload=()=>{
-      edit={img, rot:0, flipH:false, flipV:false, crop:{x:0,y:0,w:100,h:100}, onConfirm};
-      document.getElementById('editorName').value=defaultName || (file.name||'').replace(/\.[^.]+$/,'');
-      document.getElementById('editorDesc').value='';
-      renderEditorStage();
-      imgEditModal.classList.add('show');
-    };
+    img.onload=()=>startEditorWithImage(img, defaultName || (file.name||'').replace(/\.[^.]+$/,''), '', onConfirm);
     img.src=ev.target.result;
   };
   reader.readAsDataURL(file);
+}
+/* Abre o editor a partir de uma imagem já existente (reeditar: recortar/girar/renomear de novo). */
+function openImageEditorFromDataUrl(dataUrl, defaultName, defaultDesc, onConfirm){
+  const img=new Image();
+  img.onload=()=>startEditorWithImage(img, defaultName, defaultDesc, onConfirm);
+  img.src=dataUrl;
+}
+/* Clique em "editar imagem" de qualquer item: reedita a imagem atual, ou abre o seletor de arquivo se ainda não houver uma. */
+function editAnyImage(currentImg, currentName, currentDesc, onConfirm){
+  if(currentImg){ openImageEditorFromDataUrl(currentImg, currentName, currentDesc, onConfirm); return; }
+  const inp=document.createElement('input'); inp.type='file'; inp.accept='image/*,.svg';
+  inp.onchange=e=>{ const f=e.target.files[0]; if(f) openImageEditor(f, currentName, onConfirm); };
+  inp.click();
+}
+function openEditForToken(t,master){
+  const img = master ? master.img : t.img;
+  const name = master ? master.name : (t.name||'');
+  const desc = master ? (master.desc||'') : (t.desc||'');
+  editAnyImage(img, name, desc, (dataUrl,newName,newDesc)=>{
+    if(master){ master.img=dataUrl; if(newName) master.name=newName; master.desc=newDesc; renderSheet(); }
+    else { t.img=dataUrl; t.icon=null; if(newName) t.name=newName; t.desc=newDesc; }
+    renderTokens(); renderPlayers();
+  });
 }
 document.getElementById('rotLeftBtn').onclick=()=>{ edit.rot=(edit.rot+270)%360; edit.crop={x:0,y:0,w:100,h:100}; renderEditorStage(); };
 document.getElementById('rotRightBtn').onclick=()=>{ edit.rot=(edit.rot+90)%360; edit.crop={x:0,y:0,w:100,h:100}; renderEditorStage(); };
